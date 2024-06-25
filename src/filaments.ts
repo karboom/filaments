@@ -21,10 +21,11 @@ type Sub = Knex.QueryBuilder | null
 type Query = {
     pc?: number;
     p?: number;
-    od?:  string & string[];
-    rt?:  string & string[];
+    od?:  string | string[];
+    rt?:  string | string[];
+    or?: string | string[][]
     // Todo 其他的保留字符串
-    [key: string]: number | undefined | (string & string[])
+    [key: string]: number| number[] | undefined | string | string[] | string[][]
 }
 
 export class Filaments<T> {
@@ -38,13 +39,18 @@ export class Filaments<T> {
     public before: Function | null = null
     public after: Function | null = null
     public schema: object = {}
+    public table: string = ''
 
-    constructor(table: string, schema: {}, maps: object) {
-        for (const key of Object.keys(schema)) {
-            if (_.isObject(schema[key])) {
+    constructor(table: string, schema: object, maps: object) {
+        this.table = table
+        this.schema = schema
+        this.maps = maps
+
+        _.forEach(schema, (value, key) => {
+            if (_.isObject(value)) {
                 this.json_fields.push(key)
             }
-        }
+        })
     }
 
 
@@ -60,17 +66,17 @@ export class Filaments<T> {
     /**
      * JSON字段处理
      */
-    protected json_handler = (data: object, func: Function): T | T[] => {
+    protected json_handler = (data: any, func: Function): any => {
         if (this.json_fields.length > 0) {
             if (_.isArray(data)) {
                 return _.map(data, (obj)=>{
                     return this.json_handler(obj, func)
                 })
             } else {
-                return _.mapValues(data, (val, key: String) => {
+                return _.mapValues(data, (val: any, key: String) => {
                     if (_.includes(this.json_fields, key)) val = func(val)
                     return val
-                }) as T;
+                });
             }
         } else {
             return data;
@@ -163,9 +169,9 @@ export class Filaments<T> {
         }
 
 
-        copy = this.json_handler(copy, JSON.stringify)
+        const final =  this.json_handler(copy, JSON.stringify)
 
-        return db.table(this.table).whereIn('id', copy_ids).update(copy)
+        return db.table(this.table).whereIn('id', copy_ids).update(final)
     }
     // endregion
 
@@ -175,7 +181,7 @@ export class Filaments<T> {
 
 
     protected build_return(db: Knex.QueryBuilder, query: Query): Knex.QueryBuilder {
-        let fields = '*'
+        let fields: any = '*'
         if (query.rt) {
             fields = _.isArray(query.rt) ? query.rt : query.rt.split(',');
         }
@@ -194,7 +200,7 @@ export class Filaments<T> {
     protected build_order(db: Knex.QueryBuilder, query: Query) {
         if (query.od) {
             const sorts: string[] = []
-            const origin: String[] = _.isArray(query.od) ? query.od : query.od.split(',')
+            const origin: string[] = _.isArray(query.od) ? query.od : query.od.split(',')
             _.forEach(origin, (val) => {
                 let order, field
                 if (_.startsWith(val, '-')) {
@@ -222,7 +228,7 @@ export class Filaments<T> {
      */
     protected build_condition(db: Knex.QueryBuilder, query: Query) {
         // Todo jhas  jhm jnin jbet
-        const parseStringToNDArray = (input: string): string[] => {
+        const parseStringToNDArray = (input: string): any[] => {
             // 去除字符串两端的空格
             input = input.trim();
 
@@ -235,7 +241,7 @@ export class Filaments<T> {
             }
 
             // 递归解析函数
-            const parse = (str) => {
+            const parse = (str: string): any[] => {
                 // 去除两端的括号
                 str = str.slice(1, -1).trim();
 
@@ -290,11 +296,20 @@ export class Filaments<T> {
 
         const filtered_query = _.omit(query, ['p', 'pc', 'od', 'rt', 'sub', 'gp', 'pg', 'or'])
 
-        const array_val = (val: string | string[]) => (!_.isArray(val) ? val.split(',') : val)
-        const make_holder = (val: string | string[])=> _.join(_.map(val, () => '?'))
+        // Todo 这里的类型要限制的严格一些
+        const array_val = (val: any) => (!_.isArray(val) ? val.split(',') : val)
+        const make_holder = (val: any)=> _.join(_.map(val, () => '?'))
 
 
-        const or_fields = parseStringToNDArray(query.or)
+        let or_fields = []
+        if (query.or) {
+            if (_.isString(query.or)) {
+                or_fields = parseStringToNDArray(query.or)
+            }
+            if (_.isArray(query.or)) {
+                or_fields = query.or
+            }
+        }
         const key_group = _.groupBy(_.keys(filtered_query), (val)=> {
             const index = _.findIndex(or_fields, (v)=> v.indexOf(val) > -1)
 
