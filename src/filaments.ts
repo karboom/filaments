@@ -1,5 +1,6 @@
 import {Knex} from "knex";
-import Joi, {NumberSchema, StringSchema} from "joi";
+import * as Joi from "joi";
+import {NumberSchema, StringSchema} from "joi";
 import * as _ from 'lodash'
 
 
@@ -7,26 +8,38 @@ import * as _ from 'lodash'
 export type MakeType<S> = {
     [K in keyof S]?:
     S[K] extends StringSchema ? String :
-        S[K] extends NumberSchema ? Number :
+        S[K] extends NumberSchema ? number :
             S[K] extends Object ? MakeType<S[K]>:
                 never
     ;
 };
 
-type Ids = Number | Number[] | String | String[]
+type Ids = number | number[] | string | string[]
+type Sub = Knex.QueryBuilder | null
+
+// Todo 能否兼容外部框架调用
+type Query = {
+    pc?: number;
+    p?: number;
+    od?:  string & string[];
+    rt?:  string & string[];
+    // Todo 其他的保留字符串
+    [key: string]: number | undefined | (string & string[])
+}
 
 export class Filaments<T> {
-    static DEFAULT_QUERY_PC: Number = 20
-    static DEFAULT_QUERY_P: Number = 1
-    static NAME_SPLITTER: String = '|'
-    static VALUE_SPLITTER: String = '|'
+    static DEFAULT_QUERY_PC: number = 20
+    static DEFAULT_QUERY_P: number = 1
+    static NAME_SPLITTER: string = '|'
+    static VALUE_SPLITTER: string = '|'
 
     public json_fields: string[] = []
     public maps: {} = {}
-    public before: Function = null
-    public after: Function = null
+    public before: Function | null = null
+    public after: Function | null = null
+    public schema: object = {}
 
-    constructor(public table, public schema, public maps) {
+    constructor(table: string, schema: {}, maps: object) {
         for (const key of Object.keys(schema)) {
             if (_.isObject(schema[key])) {
                 this.json_fields.push(key)
@@ -40,24 +53,24 @@ export class Filaments<T> {
     /**
      * 默认的校验处理器
      */
-    protected default_schema_handler = (S, data: T) => {
+    protected default_schema_handler = (S: object, data: T) => {
         return _.pick(S, _.keys(data))
     }
 
     /**
      * JSON字段处理
      */
-    protected json_handler = (data, func: Function) => {
+    protected json_handler = (data: object, func: Function): T | T[] => {
         if (this.json_fields.length > 0) {
             if (_.isArray(data)) {
                 return _.map(data, (obj)=>{
                     return this.json_handler(obj, func)
                 })
             } else {
-                return _.mapValues(data, (val, key) => {
+                return _.mapValues(data, (val, key: String) => {
                     if (_.includes(this.json_fields, key)) val = func(val)
                     return val
-                });
+                }) as T;
             }
         } else {
             return data;
@@ -67,8 +80,8 @@ export class Filaments<T> {
     /**
      * 处理Joi校验格式, Todo 测试
      */
-    protected normalize_schema = (schema)=> {
-        const obj = _.mapValues(schema, (val, key) => {
+    protected normalize_schema = (schema: object): object => {
+        const obj = _.mapValues(schema, (val) => {
             if (_.isObject(val)) {
                 return this.normalize_schema(val)
             } else {
@@ -82,8 +95,8 @@ export class Filaments<T> {
     // endregion
 
     // region 新增
-    public async create(db: Knex, data: T[] | T, schema_handle: Function = null) {
-        let copy = _.cloneDeep(data)
+    public async create(db: Knex, data: T[] | T, schema_handle: Function | null = null) {
+        let copy: any = _.cloneDeep(data)
 
         const single = !_.isArray(copy)
         if (single) {
@@ -120,7 +133,8 @@ export class Filaments<T> {
     // region 删除
 
     public delete_by_ids(db: Knex, ids: Ids) {
-        let copy = _.clone(ids)
+        // Todo 好像IDs没必要clone
+        let copy: any = _.clone(ids)
 
         if (!_.isArray(copy)) {
             copy = [copy]
@@ -130,16 +144,16 @@ export class Filaments<T> {
     }
     // endregion
     // region 修改
-    public update_by_ids(db: Knex, ids: Ids, data: T, schema_handler: Function = null) {
+    public update_by_ids(db: Knex, ids: Ids, data: T, schema_handler: Function | null = null) {
         let copy = _.cloneDeep(data)
-        let copy_ids = _.clone(ids)
+        let copy_ids: any = _.clone(ids)
 
         if (!_.isArray(copy_ids)) {
             copy_ids = [copy_ids]
         }
 
         let schema = _.cloneDeep(this.schema)
-        schema = schema_handler ? schema_handler(schema) : this.default_schema_handler(schema_handler, copy);
+        schema = schema_handler ? schema_handler(schema) : this.default_schema_handler(schema, copy);
 
         const res = Joi.object(schema).validate(copy, {
             presence: 'required',
@@ -160,7 +174,7 @@ export class Filaments<T> {
     // region 共用
 
 
-    protected build_return(db: Knex.QueryBuilder, query): Knex.QueryBuilder {
+    protected build_return(db: Knex.QueryBuilder, query: Query): Knex.QueryBuilder {
         let fields = '*'
         if (query.rt) {
             fields = _.isArray(query.rt) ? query.rt : query.rt.split(',');
@@ -169,7 +183,7 @@ export class Filaments<T> {
         return db.select(fields)
     }
 
-    protected build_sub(db: Knex, sub) : Knex.QueryBuilder{
+    protected build_sub(db: Knex, sub: Sub) : Knex.QueryBuilder{
         if (sub) {
             return db.table(db.raw(sub.table(this.table)).wrap('(', ') as sub'))
         } else {
@@ -177,10 +191,10 @@ export class Filaments<T> {
         }
     }
 
-    protected build_order(db: Knex.QueryBuilder, query) {
+    protected build_order(db: Knex.QueryBuilder, query: Query) {
         if (query.od) {
             const sorts: string[] = []
-            const origin = _.isArray(query.od) ? query.od : query.od.split(',')
+            const origin: String[] = _.isArray(query.od) ? query.od : query.od.split(',')
             _.forEach(origin, (val) => {
                 let order, field
                 if (_.startsWith(val, '-')) {
@@ -206,9 +220,9 @@ export class Filaments<T> {
      * @param query
      * @protected
      */
-    protected build_condition(db: Knex.QueryBuilder, query) {
+    protected build_condition(db: Knex.QueryBuilder, query: Query) {
         // Todo jhas  jhm jnin jbet
-        const parseStringToNDArray = (input) => {
+        const parseStringToNDArray = (input: string): string[] => {
             // 去除字符串两端的空格
             input = input.trim();
 
@@ -276,8 +290,8 @@ export class Filaments<T> {
 
         const filtered_query = _.omit(query, ['p', 'pc', 'od', 'rt', 'sub', 'gp', 'pg', 'or'])
 
-        const array_val = (val) => (!_.isArray(val) ? val.split(',') : val)
-        const make_holder = (val)=> _.join(_.map(val, () => '?'))
+        const array_val = (val: string | string[]) => (!_.isArray(val) ? val.split(',') : val)
+        const make_holder = (val: string | string[])=> _.join(_.map(val, () => '?'))
 
 
         const or_fields = parseStringToNDArray(query.or)
@@ -329,7 +343,7 @@ export class Filaments<T> {
 
                     // region 处理函数调用
                     for (const func of func_list) {
-                        let param_list = []
+                        let param_list: string[] = []
                         if (func.indexOf('(') > -1) {
                             param_list = func.substring(func.indexOf('(')+1, func.indexOf(')')).split(',')
                             // Todo 数据类型问题
@@ -398,7 +412,7 @@ export class Filaments<T> {
         return base
     }
 
-    protected build_select(db: Knex, query, sub): Knex.QueryBuilder {
+    protected build_select(db: Knex, query: Query, sub: Sub) {
         let ctx = this.build_sub(db, sub)
         ctx = this.build_return(ctx, query)
 
@@ -408,7 +422,7 @@ export class Filaments<T> {
         return ctx
     }
 
-    protected async do_query (query: Knex.QueryBuilder, lock: Boolean = false): Promise<T[]>{
+    protected async do_query (query: Knex.QueryBuilder, lock: boolean = false): Promise<T[]>{
         let data: any = await (lock ? query.forUpdate() : query)
 
         data = this.json_handler(data, JSON.parse)
@@ -425,7 +439,7 @@ export class Filaments<T> {
     /**
      * 条件查询
      */
-    public async get(db: Knex, query: any = {}, sub = null): Promise<T[]> {
+    public async get(db: Knex, query: Query, sub: Sub = null) {
         let base = this.build_select(db, query, sub)
 
         if (query.pc) {
@@ -438,32 +452,37 @@ export class Filaments<T> {
     /**
      * id查询
      */
-    public async get_by_ids(db: Knex, ids: Ids, lock: Boolean = false): Promise<T & T[]> {
-        const arr: any = _.isArray(ids) ? ids : [ids]
+    public async get_by_ids(db: Knex, ids: Ids, lock: boolean = false) {
+        const arr = _.isArray(ids) ? ids : [ids]
         const query = db.table(this.table).whereIn('id', arr)
-        const data = await this.do_query(query, lock)
-        return _.isArray(ids) ? data : data[0]
+        return await this.do_query(query, lock)
     }
+
 
     /**
      * 分页查询
      */
-    public async pages(db, query: any = {}, sub = null) {
-        query = _.defaults(query, {
-            p: Filaments.DEFAULT_QUERY_P,
-            pc: Filaments.DEFAULT_QUERY_PC,
-        })
-        if (query.p <= 0) throw '页码请从第一页开始'
+    public async pages(db: Knex, query: Query, sub: Sub = null) {
+        const copy = _.cloneDeep(query)
+        if (!copy.p) {
+            copy.p = Filaments.DEFAULT_QUERY_P
+        }
+        if (!copy.pc) {
+            copy.pc = Filaments.DEFAULT_QUERY_PC
+        }
 
-        let base = this.build_select(db, query, sub)
-            .limit(query.pc)
-            .offset((query.p - 1) * query.pc)
+        if (copy.p <= 0) throw '页码请从第一页开始'
+
+        let base = this.build_select(db, copy, sub)
+            .limit(copy.pc)
+            .offset((copy.p - 1) * copy.pc)
 
         const rows = await this.do_query(base)
 
         let count = 0
-        if (query.pg > 0) {
-            count = await this.count(db, query, sub)
+        if (Number(copy.pg) > 0) {
+            const res = await this.aggregation(db, {id: 'count'}, [], copy, sub)
+            count = res[0]['count_id']
         }
 
 
@@ -471,8 +490,8 @@ export class Filaments<T> {
             data: rows,
             count,
             pages: {
-                total: Math.ceil(count / query.pc),
-                now: Number(query.p),
+                total: Math.ceil(count / copy.pc),
+                now: Number(copy.p),
             },
         }
     }
@@ -480,17 +499,19 @@ export class Filaments<T> {
     // endregion
 
     // region 聚合
-    public async aggregation(db: Knex, target, group: String[], query, sub = null ) : Promise<any[]>{
-        let base = this.build_select(db, query, sub)
+    // Todo 反转target，确保更多可能性
+    public async aggregation(db: Knex, target: {[key: string]: 'count' | 'sum'}, group: string[], query: Query, sub: Sub = null ) : Promise<any[]>{
+        let base = this.build_select(db, query, sub).clearSelect()
 
-        base = base.clearSelect().groupBy(group)
+        if (!_.isEmpty(group)) base = base.groupBy(group)
+
         for (const func of _.keys(target)) {
             // Todo 数组
             const fields = target[func]
             for (const field of fields) {
                 let params = `\`${field}\``
-                // // TOdo isNumber的稳定性
-                // if (_.isNumber(field)) {
+                // // TOdo isnumber的稳定性
+                // if (_.isnumber(field)) {
                 //    params = `${field}`
                 // }
 
@@ -513,11 +534,8 @@ export class Filaments<T> {
      * 直接返回knex.QueryBuilder,可以根据需要追加参数
      * 1.可以通过Mysql2驱动的 .options({rowsAsArray: true}) 返回数组
      * 2.可以通过.stream返回流
-     * @param db
-     * @param query
-     * @param sub
      */
-    public get_raw(db, query: any = {}, sub = null) {
+    public get_raw(db: Knex, query: Query, sub: Sub = null) {
         let base = this.build_select(db, query, sub)
         if (query.pc) {
             base = base.limit(query.pc)
