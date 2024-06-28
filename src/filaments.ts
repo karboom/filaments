@@ -23,9 +23,15 @@ type Query = {
     p?: number;
     od?:  string | string[];
     rt?:  string | string[];
-    or?: string | string[][]
+    or?: string | string[][];
+    pg?: number;
     // Todo 其他的保留字符串
     [key: string]: number| number[] | undefined | string | string[] | string[][]
+}
+
+type AggregationTarget = {
+    sum?: string | string[],
+    count?: string | string[],
 }
 
 export class Filaments<T> {
@@ -40,6 +46,7 @@ export class Filaments<T> {
     public after: Function | null = null
     public schema: object = {}
     public table: string = ''
+    public pk: string = 'id'
 
     constructor(table: string, schema: object, maps: object) {
         this.table = table
@@ -84,11 +91,12 @@ export class Filaments<T> {
     }
 
     /**
-     * 处理Joi校验格式, Todo 测试
+     * 处理Joi校验格式
      */
-    protected normalize_schema = (schema: object): object => {
+    public normalize_schema = (schema: object): Joi.Schema => {
         const obj = _.mapValues(schema, (val) => {
-            if (_.isObject(val)) {
+
+            if (_.isObject(val) && !Joi.isSchema(val)) {
                 return this.normalize_schema(val)
             } else {
                 return val
@@ -98,6 +106,13 @@ export class Filaments<T> {
         return Joi.object(obj)
     }
 
+    // Todo
+    private field_name_safe(field_name: string): string {
+        return field_name
+    }
+    private func_name_save(func_name: string): string {
+        return func_name
+    }
     // endregion
 
     // region 新增
@@ -146,7 +161,7 @@ export class Filaments<T> {
             copy = [copy]
         }
 
-        return db.table(this.table).whereIn('id', copy).del()
+        return db.table(this.table).whereIn(this.pk, copy).del()
     }
     // endregion
     // region 修改
@@ -171,7 +186,7 @@ export class Filaments<T> {
 
         const final =  this.json_handler(copy, JSON.stringify)
 
-        return db.table(this.table).whereIn('id', copy_ids).update(final)
+        return db.table(this.table).whereIn(this.pk, copy_ids).update(final)
     }
     // endregion
 
@@ -179,8 +194,7 @@ export class Filaments<T> {
 
     // region 共用
 
-
-    protected build_return(db: Knex.QueryBuilder, query: Query): Knex.QueryBuilder {
+    public build_return(db: Knex.QueryBuilder, query: Query): Knex.QueryBuilder {
         let fields: any = '*'
         if (query.rt) {
             fields = _.isArray(query.rt) ? query.rt : query.rt.split(',');
@@ -189,7 +203,7 @@ export class Filaments<T> {
         return db.select(fields)
     }
 
-    protected build_sub(db: Knex, sub: Sub) : Knex.QueryBuilder{
+    public build_sub(db: Knex, sub: Sub) : Knex.QueryBuilder{
         if (sub) {
             return db.table(db.raw(sub.table(this.table)).wrap('(', ') as sub'))
         } else {
@@ -197,7 +211,7 @@ export class Filaments<T> {
         }
     }
 
-    protected build_order(db: Knex.QueryBuilder, query: Query) {
+    public build_order(db: Knex.QueryBuilder, query: Query) {
         if (query.od) {
             const sorts: string[] = []
             const origin: string[] = _.isArray(query.od) ? query.od : query.od.split(',')
@@ -222,11 +236,8 @@ export class Filaments<T> {
 
     /**
      * 构建查询条件
-     * @param db
-     * @param query
-     * @protected
      */
-    protected build_condition(db: Knex.QueryBuilder, query: Query) {
+    public build_condition(db: Knex.QueryBuilder, query: Query) {
         // Todo jhas  jhm jnin jbet
         const parseStringToNDArray = (input: string): any[] => {
             // 去除字符串两端的空格
@@ -324,7 +335,7 @@ export class Filaments<T> {
         // 根据不同的逻辑类型构建
         // TODO 是否支持 更复杂的 运算逻辑，比如说反过来 默认用 | 指定的分组采用 &
         _.forEach(key_group, (keys, type)=> {
-            const where_type = type.indexOf('negative') > -1 ? 'orWhere' : 'andWhere';
+            const where_type = type.indexOf('negative') > -1 ? 'orWhereRaw' : 'andWhereRaw';
 
             base = base.andWhere((ctx)=> {
                 _.forEach(_.pick(filtered_query, keys), (val, key) => {
@@ -349,7 +360,7 @@ export class Filaments<T> {
                     let value = array_val(val)
 
 
-                    // json和普通字段统一处理
+                    // json和普通字段统一处理, // TOdo 去除名字内部的反引号
                     let sql_field = `\`${field}\``
                     if (field.indexOf('.')>-1 || field.indexOf('[')>-1) {
                         const segments = field.split('.')
@@ -371,7 +382,7 @@ export class Filaments<T> {
                     // endregion
 
                     // region 处理比较操作符
-                    const where_func: Knex.RawQueryBuilder = ctx[where_type]
+                    const where_func: Knex.RawQueryBuilder = _.bind(ctx[where_type], ctx)
                     // 根据不同的函数和操作符拼接
                     //TODO 同名参数如何处理
                     // Todo URIEncode问题
@@ -406,7 +417,7 @@ export class Filaments<T> {
                         case 'like':
                             ctx = where_func(`${sql_field} like ?`, _.take(value))
                             break
-                        case 'not like':
+                        case 'not_like':
                             ctx = where_func(`${sql_field} not like ?`, _.take(value))
                             break
                         case 'is_null':
@@ -419,7 +430,6 @@ export class Filaments<T> {
                     }
                     // endregion
                 })
-
             })
         })
 
@@ -469,7 +479,7 @@ export class Filaments<T> {
      */
     public async get_by_ids(db: Knex, ids: Ids, lock: boolean = false) {
         const arr = _.isArray(ids) ? ids : [ids]
-        const query = db.table(this.table).whereIn('id', arr)
+        const query = db.table(this.table).whereIn(this.pk, arr)
         return await this.do_query(query, lock)
     }
 
@@ -496,7 +506,7 @@ export class Filaments<T> {
 
         let count = 0
         if (Number(copy.pg) > 0) {
-            const res = await this.aggregation(db, {id: 'count'}, [], copy, sub)
+            const res = await this.aggregation(db, {count: ['id']}, copy, [], sub)
             count = res[0]['count_id']
         }
 
@@ -513,32 +523,27 @@ export class Filaments<T> {
 
     // endregion
 
+
+
     // region 聚合
-    // Todo 反转target，确保更多可能性
-    public async aggregation(db: Knex, target: {[key: string]: 'count' | 'sum'}, group: string[], query: Query, sub: Sub = null ) : Promise<any[]>{
+    public aggregation(db: Knex, target: AggregationTarget, query: Query = {}, group: string | string[] = [], sub: Sub = null ): Knex.QueryBuilder{
         let base = this.build_select(db, query, sub).clearSelect()
 
-        if (!_.isEmpty(group)) base = base.groupBy(group)
-
-        for (const func of _.keys(target)) {
-            // Todo 数组
-            const fields = target[func]
-            for (const field of fields) {
-                let params = `\`${field}\``
-                // // TOdo isnumber的稳定性
-                // if (_.isnumber(field)) {
-                //    params = `${field}`
-                // }
-
-                // Todo 转译函数名或者增加反引号
-                base = base.select(db.raw(`${func}(\`${field}\`) as ${func}_${field}`))
-            }
-
+        if (!_.isEmpty(group)) {
+            base = base.groupBy(_.isArray(group) ? group : [group])
         }
 
-        const res = await base.select(group)
+        _.forEach(target, (val: any, func) => {
+            if (!_.isArray(val)) {val = [val]}
+            for (const field of val) {
+                const func_name = this.func_name_save(func)
+                const field_name = this.field_name_safe(field)
 
-        return res
+                base = base.select(db.raw(`${func_name}(\`${field_name}\`) as ${func_name}_${field_name}`))
+            }
+        })
+
+        return base.select(group);
     }
     // endregion
 
@@ -550,7 +555,7 @@ export class Filaments<T> {
      * 1.可以通过Mysql2驱动的 .options({rowsAsArray: true}) 返回数组
      * 2.可以通过.stream返回流
      */
-    public get_raw(db: Knex, query: Query, sub: Sub = null) {
+    public get_raw(db: Knex, query: Query, sub: Sub = null): Knex.QueryBuilder {
         let base = this.build_select(db, query, sub)
         if (query.pc) {
             base = base.limit(query.pc)

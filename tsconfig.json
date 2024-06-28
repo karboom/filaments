@@ -5,6 +5,6 @@
     "rootDir": "src",
     "declaration": true
   },
-  "exclude": ["script"],
+  "exclude": ["script", "node_modules"],
   "include": ["src"]
 }
