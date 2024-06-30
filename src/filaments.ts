@@ -25,9 +25,12 @@ type Query = {
     rt?:  string | string[];
     or?: string | string[][];
     pg?: number;
+    lg?: string;
     // Todo 其他的保留字符串
     [key: string]: number| number[] | undefined | string | string[] | string[][]
 }
+
+
 
 type AggregationTarget = {
     sum?: string | string[],
@@ -239,199 +242,203 @@ export class Filaments<T> {
      */
     public build_condition(db: Knex.QueryBuilder, query: Query) {
         // Todo jhas  jhm jnin jbet
-        const parseStringToNDArray = (input: string): any[] => {
-            // 去除字符串两端的空格
-            input = input.trim();
 
-            // 如果字符串为空，返回空数组
-            if (input === '') return [];
+        class LogicTreeNode {
+            public type: "or" | "and" = "and";
+            public value: string[] | LogicTreeNode[] = []
+            public str: string = ""
+            public all_child: string[] = []
+            public children: LogicTreeNode[] = []
+        }
+        const parseLogic = (input: string): LogicTreeNode => {
+            // Todo 支持""包裹字符串
+            const root = new LogicTreeNode()
+            let current = root
+            const stack = [root]
+            let str_wrap = ''
+            for (let i = 0 ; i < input.length ; i++) {
+                const char = input[i]
+                if (char == '(') {
+                    const prev = input[i-1]
+                    const type = prev == '!' ? 'or' : 'and'
+                    const node = new LogicTreeNode()
+                    node.type = type
 
-            // 如果字符串不以'('开头或不以')'结尾，抛出错误
-            if (!input.startsWith('(') || !input.endsWith(')')) {
-                throw new Error("Invalid input format.");
-            }
+                    current.children?.push(node)
+                    current.str += `?${current.children.length-1}`
 
-            // 递归解析函数
-            const parse = (str: string): any[] => {
-                // 去除两端的括号
-                str = str.slice(1, -1).trim();
+                    stack.push(node)
+                    current = node
+                } else if (char == ')') {
+                    // region 处理最终数据结构
+                    const all_child = new Set()
+                    for (const key of current.str?.split(',')) {
+                        if (key[0] == '?') {
+                            const index = Number.parseInt(key.substring(1))
+                            current.value.push(current.children[index] as any)
 
-                // 如果字符串为空，返回空数组
-                if (str === '') return [];
-
-                const result = [];
-                let currentElement = '';
-                let nestedLevel = 0;
-
-                for (let i = 0; i < str.length; i++) {
-                    const char = str[i];
-
-                    if (char === '(') {
-                        if (nestedLevel === 0 && currentElement.trim() !== '') {
-                            throw new Error("Invalid input format.");
+                            for (const child of current.children) {
+                                for (const key of child.all_child) {
+                                    all_child.add(key)
+                                }
+                            }
+                        } else {
+                            all_child.add(key)
+                            current.value.push(key as any)
                         }
-                        nestedLevel++;
-                        currentElement += char;
-                    } else if (char === ')') {
-                        nestedLevel--;
-                        currentElement += char;
-                        if (nestedLevel === 0) {
-                            result.push(parse(currentElement));
-                            currentElement = '';
-                        }
-                    } else if (char === ',' && nestedLevel === 0) {
-                        if (currentElement.trim() !== '') {
-                            result.push(currentElement.trim());
-                        }
-                        currentElement = '';
-                    } else {
-                        currentElement += char;
+                    }
+                    current.all_child = Array.from(all_child) as string[]
+
+                    // endregion
+
+                    stack.pop()
+                    current = stack[stack.length - 1]
+                } else {
+                    if (char != '!') {
+                        current.str += char
                     }
                 }
-
-                if (nestedLevel !== 0) {
-                    throw new Error("Invalid input format.");
-                }
-
-                if (currentElement.trim() !== '') {
-                    result.push(currentElement.trim());
-                }
-
-                return result;
             }
 
-            return parse(input);
+            return root.children[0]
         }
+
 
         let base = db
 
-        const filtered_query = _.omit(query, ['p', 'pc', 'od', 'rt', 'sub', 'gp', 'pg', 'or'])
+        const filtered_query = _.omit(query, ['p', 'pc', 'od', 'rt', 'gp', 'pg', 'lg'])
 
         // Todo 这里的类型要限制的严格一些
         const array_val = (val: any) => (!_.isArray(val) ? val.split(',') : val)
         const make_holder = (val: any)=> _.join(_.map(val, () => '?'))
 
 
-        let or_fields = []
-        if (query.or) {
-            if (_.isString(query.or)) {
-                or_fields = parseStringToNDArray(query.or)
-            }
-            if (_.isArray(query.or)) {
-                or_fields = query.or
-            }
+        let logic_tree = new LogicTreeNode()
+        if (query.lg) {
+            logic_tree = parseLogic(query.lg)
         }
-        const key_group = _.groupBy(_.keys(filtered_query), (val)=> {
-            const index = _.findIndex(or_fields, (v)=> v.indexOf(val) > -1)
+        // 未明确声明的field设为默认值
+        logic_tree.value.push(..._.keys(_.omit(filtered_query, logic_tree.all_child)) as any)
 
-            if (index >= 0) {
-                return `negative_${index+1}`
-            } else {
-                // 默认情况下，&为正向
-                return `positive`
-            }
-        })
+        /**
+         * 字段和条件构建
+         */
+        const field_build = (ctx: Knex.QueryBuilder, picked_query: Query,  where_type: "orWhereRaw" | "andWhereRaw"): Knex.QueryBuilder => {
+            _.forEach(picked_query, (val, key: string) => {
+                const left_parts = key.split(Filaments.NAME_SPLITTER)
+                let field = left_parts[0]
+                let op = ''
+                let func_list: String[] = []
 
-        // 根据不同的逻辑类型构建
-        // TODO 是否支持 更复杂的 运算逻辑，比如说反过来 默认用 | 指定的分组采用 &
-        _.forEach(key_group, (keys, type)=> {
-            const where_type = type.indexOf('negative') > -1 ? 'orWhereRaw' : 'andWhereRaw';
+                // Todo 更新完整的操作符名单
+                let op_str = ['le', 'lt', 'in']
+                const last_part = _.snakeCase(_.last(left_parts))
+                if (op_str.indexOf(last_part) > -1) {
+                    op = last_part
+                    func_list = _.slice(left_parts, 1, left_parts.length - 1)
+                } else {
+                    func_list = _.slice(left_parts, 1)
+                }
 
-            base = base.andWhere((ctx)=> {
-                _.forEach(_.pick(filtered_query, keys), (val, key) => {
-                    const left_parts = key.split(Filaments.NAME_SPLITTER)
-                    let field = left_parts[0]
-                    let op = ''
-                    let func_list: String[] = []
+                // 数值
+                // 函数参数
+                // 统一转化为数组
+                let value = array_val(val)
 
-                    // Todo 更新完整的操作符名单
-                    let op_str = ['le', 'lt']
-                    const last_part = _.snakeCase(_.last(left_parts))
-                    if (op_str.indexOf(last_part) > -1) {
-                        op = last_part
-                        func_list = _.slice(left_parts, 1, left_parts.length - 1)
-                    } else {
-                        func_list = _.slice(left_parts, 1)
+                // json和普通字段统一处理, // TOdo 去除名字内部的反引号
+                let sql_field = `\`${field}\``
+                if (field.indexOf('.') > -1 || field.indexOf('[') > -1) {
+                    const segments = field.split('.')
+                    sql_field = `\`${segments[0]}\`->'$.${segments.slice(1).join('.')}'`
+                }
+
+                // region 处理函数调用
+                for (const func of func_list) {
+                    let param_list: string[] = []
+                    if (func.indexOf('(') > -1) {
+                        param_list = func.substring(func.indexOf('(') + 1, func.indexOf(')')).split(',')
+                        // Todo 数据类型问题
+                        // Todo 参数安全问题
                     }
 
-                    // 数值
-                    // 函数参数
-                    // 统一转化为数组
-                    let value = array_val(val)
+                    const param_str = _.isEmpty(param_list) ? '' : param_list.join(',')
+                    sql_field = `${func}(${sql_field}${param_str})`
+                }
+                // endregion
 
+                // region 处理比较操作符
+                const where_func: Knex.RawQueryBuilder = _.bind(ctx[where_type], ctx)
+                // 根据不同的函数和操作符拼接
+                //TODO 同名参数如何处理
+                // Todo URIEncode问题
+                switch (op) {
+                    case '':
+                        ctx = where_func(`${sql_field} = ?`, _.take(value))
+                        break;
+                    case 'ge':
+                        ctx = where_func(`${sql_field} >= ?`, _.take(value))
+                        break
+                    case 'gt':
+                        ctx = where_func(`${sql_field} > ?`, _.take(value))
+                        break
+                    case 'le':
+                        ctx = where_func(`${sql_field} <= ?`, _.take(value))
+                        break
+                    case 'lt':
+                        ctx = where_func(`${sql_field} < ?`, _.take(value))
+                        break
+                    case 'in':
+                        ctx = where_func(`${sql_field} in (${make_holder(value)})`, value)
+                        break
+                    case 'not_in':
+                        ctx = where_func(`${sql_field} not in (${make_holder(value)})`, value)
+                        break
+                    // Todo 多重区间？
+                    case 'between':
+                        ctx = where_func(`${sql_field} between (${make_holder(value)})`, value)
+                        break
+                    case 'not_between':
+                        ctx = where_func(`${sql_field} not between (${make_holder(value)})`, value)
+                        break
+                    case 'like':
+                        ctx = where_func(`${sql_field} like ?`, _.take(value))
+                        break
+                    case 'not_like':
+                        ctx = where_func(`${sql_field} not like ?`, _.take(value))
+                        break
+                    case 'is_null':
+                        ctx = where_func(`${sql_field} is null`)
+                        break
+                    case 'is_not_null':
+                        ctx = where_func(`${sql_field} is not null`)
+                        break
 
-                    // json和普通字段统一处理, // TOdo 去除名字内部的反引号
-                    let sql_field = `\`${field}\``
-                    if (field.indexOf('.')>-1 || field.indexOf('[')>-1) {
-                        const segments = field.split('.')
-                        sql_field = `\`${segments[0]}\`->'$.${segments.slice(1).join('.')}'`
-                    }
+                }
 
-                    // region 处理函数调用
-                    for (const func of func_list) {
-                        let param_list: string[] = []
-                        if (func.indexOf('(') > -1) {
-                            param_list = func.substring(func.indexOf('(')+1, func.indexOf(')')).split(',')
-                            // Todo 数据类型问题
-                            // Todo 参数安全问题
-                        }
-
-                        const param_str = _.isEmpty(param_list) ? '' : param_list.join(',')
-                        sql_field = `${func}(${sql_field}${param_str})`
-                    }
-                    // endregion
-
-                    // region 处理比较操作符
-                    const where_func: Knex.RawQueryBuilder = _.bind(ctx[where_type], ctx)
-                    // 根据不同的函数和操作符拼接
-                    //TODO 同名参数如何处理
-                    // Todo URIEncode问题
-                    switch (op) {
-                        case '':
-                            ctx = where_func(`${sql_field} = ?`, _.take(value))
-                            break;
-                        case 'ge':
-                            ctx = where_func(`${sql_field} >= ?`, _.take(value))
-                            break
-                        case 'gt':
-                            ctx = where_func(`${sql_field} > ?`, _.take(value))
-                            break
-                        case 'le':
-                            ctx = where_func(`${sql_field} <= ?`, _.take(value))
-                            break
-                        case 'lt':
-                            ctx = where_func(`${sql_field} < ?`, _.take(value))
-                            break
-                        case 'in':
-                            ctx = where_func(`${sql_field} in (${make_holder(value)})`, value)
-                            break
-                        case 'not_in':
-                            ctx = where_func(`${sql_field} not in (${make_holder(value)})`, value)
-                            break
-                        case 'between':
-                            ctx = where_func(`${sql_field} between (${make_holder(value)})`, value)
-                            break
-                        case 'not_between':
-                            ctx = where_func(`${sql_field} not between (${make_holder(value)})`, value)
-                            break
-                        case 'like':
-                            ctx = where_func(`${sql_field} like ?`, _.take(value))
-                            break
-                        case 'not_like':
-                            ctx = where_func(`${sql_field} not like ?`, _.take(value))
-                            break
-                        case 'is_null':
-                            ctx = where_func(`${sql_field} is null`)
-                            break
-                        case 'is_not_null':
-                            ctx = where_func(`${sql_field} is not null`)
-                            break
-
-                    }
-                    // endregion
-                })
             })
-        })
+            return ctx
+        }
+
+        /**
+         * 逻辑树构建
+         */
+        const tree_build = (ctx: Knex.QueryBuilder, node: LogicTreeNode): Knex.QueryBuilder => {
+            const tree_func_type: "orWhere" | "andWhere" = node.type == "and" ? "andWhere" : "orWhere"
+            const field_func_type: any = tree_func_type + "Raw"
+
+            return ctx[tree_func_type]((sub_ctx)=> {
+                for (const child of node.value) {
+                    if (child instanceof LogicTreeNode) {
+                        sub_ctx = tree_build(sub_ctx, child)
+                    } else {
+                        // 常规构建
+                        sub_ctx = field_build(sub_ctx, _.pick(query, child), field_func_type)
+                    }
+                }
+            })
+        }
+
+        base = tree_build(base, logic_tree)
 
 
         return base
