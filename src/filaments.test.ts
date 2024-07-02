@@ -1,8 +1,9 @@
 import {Filaments} from "./filaments";
-import * as _ from "lodash";
 import * as Joi from "joi";
 import {expect} from "chai"
-import knex, {Knex} from "knex";
+import knex from "knex";
+
+
 // should()
 describe("filaments", () => {
     const db = knex({client: 'mysql'})
@@ -31,10 +32,60 @@ describe("filaments", () => {
     })
 
     describe(".build_condition", () => {
-        it("ok", () => {
-            const res = model.build_condition(db.table("23").select(), {p: 1, asd: "2"})
-            const x = res.toSQL()
-            expect(res.toSQL()).eq(1)
+        it('lg', () => {
+            const res1 = model.build_condition(table.clone(), {name: "A", 'id|in': '1', lg: `(!(id|in),id|in)`}).toSQL()
+            expect(res1.sql).eq('select * from `T` where (`name` = ? or `id` = ?)')
+        })
+
+        // it("lb", () => {
+        //     const res = model.build_condition(table.clone(), {name: "A", id: '1', lb: 'or'}).toSQL()
+        //     expect(res.sql).eq('select * from `T` where (`name` = ? or `id` = ?)')
+        //
+        //     const res2 = model.build_condition(table.clone(), {name: "A", id: '1', lb: 'and'}).toSQL()
+        //     expect(res2.sql).eq('select * from `T` where (`name` = ? and `id` = ?)')
+        // })
+        // it("lr", () => {
+        //     const res = model.build_condition(table.clone(), {name: "A", id: '1', weight: '20', lb: 'or', lr: [['name', 'weight']]}).toSQL()
+        //     expect(res.sql).eq('select * from `T` where (`name` = ? and `weight` = ?) or (`id` = ?)')
+        //
+        //     const res2 = model.build_condition(table.clone(), {name: "A", id: '1', weight: '20', lb: 'and', lr: [['name', 'weight']]}).toSQL()
+        //     expect(res2.sql).eq('select * from `T` where (`name` = ? or `weight` = ?) and (`id` = ?)')
+        //
+        //     const res3 = model.build_condition(table.clone(), {name: "A", id: '1', weight: '20', lb: 'and', lr: '((name,weight))'}).toSQL()
+        //     expect(res3.sql).eq('select * from `T` where (`name` = ? or `weight` = ?) and (`id` = ?)')
+        // })
+
+
+        it("func call", () => {
+            const res1 = model.build_condition(table.clone(), {id: "1"}).toSQL()
+            expect(res1.sql).eq('select * from `T` where (`id` = ?)')
+
+            const res2 = model.build_condition(table.clone(), {"id|date": "1"}).toSQL()
+            expect(res2.sql).eq('select * from `T` where (date(`id`) = ?)')
+
+            const res3 = model.build_condition(table.clone(), {"id|date(2)": "1"}).toSQL()
+            expect(res3.sql).eq('select * from `T` where (date(`id`, 2) = ?)')
+
+            // Todo 安全性测试
+        })
+
+        it("op handle", () => {
+            const res1 = model.build_condition(table.clone(), {"data.id": "1"}).toSQL()
+            expect(res1.sql).eq('select * from `T` where (`data`->\'$.id\' = ?)')
+
+            const res2 = model.build_condition(table.clone(), {"data.id|ge": "1"}).toSQL()
+            expect(res2.sql).eq('select * from `T` where (`data`->\'$.id\' >= ?)')
+
+
+            const res3 = model.build_condition(table.clone(), {"id|in": "1,2"}).toSQL()
+            expect(res3.sql).eq('select * from `T` where (`id` in (? , ?))')
+
+            const res4 = model.build_condition(table.clone(), {"id|between": "1,2"}).toSQL()
+            expect(res4.sql).eq('select * from `T` where (`id` between ? and ?)')
+
+            const res = model.build_condition(table.clone(), {"data.id|date": "1"}).toSQL()
+            expect(res.sql).eq('select * from `T` where (date(`data`->\'$.id\') = ?)')
+
         })
     })
 

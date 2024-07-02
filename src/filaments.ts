@@ -32,6 +32,7 @@ type Query = {
 
 
 
+// Todo 聚合函数白名单
 type AggregationTarget = {
     sum?: string | string[],
     count?: string | string[],
@@ -41,7 +42,6 @@ export class Filaments<T> {
     static DEFAULT_QUERY_PC: number = 20
     static DEFAULT_QUERY_P: number = 1
     static NAME_SPLITTER: string = '|'
-    static VALUE_SPLITTER: string = '|'
 
     public json_fields: string[] = []
     public maps: {} = {}
@@ -111,10 +111,16 @@ export class Filaments<T> {
 
     // Todo
     private field_name_safe(field_name: string): string {
-        return field_name
+        return field_name.replace(/`/g, '')
     }
-    private func_name_save(func_name: string): string {
-        return func_name
+    private func_name_safe(func_name: string): string {
+        const list = ['count']
+        for (const func of list) {
+            if (func_name.toLowerCase().indexOf(func) > -1) {
+                return func
+            }
+        }
+        return ""
     }
     // endregion
 
@@ -200,6 +206,7 @@ export class Filaments<T> {
     public build_return(db: Knex.QueryBuilder, query: Query): Knex.QueryBuilder {
         let fields: any = '*'
         if (query.rt) {
+            // Todo 安全问题
             fields = _.isArray(query.rt) ? query.rt : query.rt.split(',');
         }
 
@@ -207,6 +214,7 @@ export class Filaments<T> {
     }
 
     public build_sub(db: Knex, sub: Sub) : Knex.QueryBuilder{
+        // Todo 安全问题
         if (sub) {
             return db.table(db.raw(sub.table(this.table)).wrap('(', ') as sub'))
         } else {
@@ -215,6 +223,7 @@ export class Filaments<T> {
     }
 
     public build_order(db: Knex.QueryBuilder, query: Query) {
+        // Todo 安全问题
         if (query.od) {
             const sorts: string[] = []
             const origin: string[] = _.isArray(query.od) ? query.od : query.od.split(',')
@@ -252,6 +261,7 @@ export class Filaments<T> {
         }
         const parseLogic = (input: string): LogicTreeNode => {
             // Todo 支持""包裹字符串
+            // Todo 支持$1占位符代替字段名
             const root = new LogicTreeNode()
             let current = root
             const stack = [root]
@@ -308,10 +318,6 @@ export class Filaments<T> {
 
         const filtered_query = _.omit(query, ['p', 'pc', 'od', 'rt', 'gp', 'pg', 'lg'])
 
-        // Todo 这里的类型要限制的严格一些
-        const array_val = (val: any) => (!_.isArray(val) ? val.split(',') : val)
-        const make_holder = (val: any)=> _.join(_.map(val, () => '?'))
-
 
         let logic_tree = new LogicTreeNode()
         if (query.lg) {
@@ -324,14 +330,62 @@ export class Filaments<T> {
          * 字段和条件构建
          */
         const field_build = (ctx: Knex.QueryBuilder, picked_query: Query,  where_type: "orWhereRaw" | "andWhereRaw"): Knex.QueryBuilder => {
+            // Todo 这里的类型要限制的严格一些,数字类型怎么办
+            const array_val = (val: any) => (!_.isArray(val) ? val.split(',') : val)
+            const make_holder = (val: any, char = ',')=> _.join(_.map(val, () => '?'), ` ${char} `)
+
+            const op_handler: any = {
+                'eq': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
+                    return ctx[where_type](`${sql_field} = ?`, _.take(value))
+                },
+                'ge': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
+                    return ctx[where_type](`${sql_field} >= ?`, _.take(value))
+                },
+                'gt': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
+                    return ctx[where_type](`${sql_field} > ?`, _.take(value))
+                },
+                'le': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
+                    return ctx[where_type](`${sql_field} <= ?`, _.take(value))
+                },
+                'lt': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
+                    return ctx[where_type](`${sql_field} < ?`, _.take(value))
+                },
+                'in': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
+                    return ctx[where_type](`${sql_field} in (${make_holder(value)})`, value)
+                },
+                'not_in': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
+                    return ctx[where_type](`${sql_field} not in (${make_holder(value)})`, value)
+                },
+                'between': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
+                    return ctx[where_type](`${sql_field} between ${make_holder(value, 'and')}`, value)
+                },
+                'not_between': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
+                    // Todo 多重between
+                    return ctx[where_type](`${sql_field} not between ${make_holder(value, 'and')}`, value)
+                },
+                'like': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
+                    // Todo 多重表达？
+                    return ctx[where_type](`${sql_field} like ?`, _.take(value))
+                },
+                'not_like': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
+                    return ctx[where_type](`${sql_field} not like ?`, _.take(value))
+                },
+                'is_null': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
+                    return ctx[where_type](`${sql_field} is null`)
+                },
+                'is_not_null': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
+                    return ctx[where_type](`${sql_field} is not null`)
+                }
+            };
+
             _.forEach(picked_query, (val, key: string) => {
                 const left_parts = key.split(Filaments.NAME_SPLITTER)
+                let func_list: string[] = []
                 let field = left_parts[0]
-                let op = ''
-                let func_list: String[] = []
+                let op = 'eq'
 
-                // Todo 更新完整的操作符名单
-                let op_str = ['le', 'lt', 'in']
+                // region 判定操作符
+                let op_str = _.keys(op_handler)
                 const last_part = _.snakeCase(_.last(left_parts))
                 if (op_str.indexOf(last_part) > -1) {
                     op = last_part
@@ -339,81 +393,36 @@ export class Filaments<T> {
                 } else {
                     func_list = _.slice(left_parts, 1)
                 }
+                // endregion
 
-                // 数值
-                // 函数参数
-                // 统一转化为数组
-                let value = array_val(val)
-
-                // json和普通字段统一处理, // TOdo 去除名字内部的反引号
-                let sql_field = `\`${field}\``
+                // region 处理字段名
+                // json和普通字段统一处理
+                let sql_field = `\`${this.field_name_safe(field)}\``
                 if (field.indexOf('.') > -1 || field.indexOf('[') > -1) {
                     const segments = field.split('.')
-                    sql_field = `\`${segments[0]}\`->'$.${segments.slice(1).join('.')}'`
+                    sql_field = `\`${this.field_name_safe(segments[0])}\`->'$.${segments.slice(1).join('.').replace(/'/g, '')}'`
                 }
+                // endregion
 
                 // region 处理函数调用
-                for (const func of func_list) {
+                for (let func of func_list) {
                     let param_list: string[] = []
                     if (func.indexOf('(') > -1) {
                         param_list = func.substring(func.indexOf('(') + 1, func.indexOf(')')).split(',')
+                        func = func.substring(0, func.indexOf('('))
                         // Todo 数据类型问题
                         // Todo 参数安全问题
                     }
 
-                    const param_str = _.isEmpty(param_list) ? '' : param_list.join(',')
-                    sql_field = `${func}(${sql_field}${param_str})`
+                    const param_str = _.isEmpty(param_list) ? '' : `, ${param_list.join(',')}`
+                    sql_field = `${this.func_name_safe(func)}(${sql_field}${param_str})`
                 }
                 // endregion
 
-                // region 处理比较操作符
-                const where_func: Knex.RawQueryBuilder = _.bind(ctx[where_type], ctx)
-                // 根据不同的函数和操作符拼接
                 //TODO 同名参数如何处理
                 // Todo URIEncode问题
-                switch (op) {
-                    case '':
-                        ctx = where_func(`${sql_field} = ?`, _.take(value))
-                        break;
-                    case 'ge':
-                        ctx = where_func(`${sql_field} >= ?`, _.take(value))
-                        break
-                    case 'gt':
-                        ctx = where_func(`${sql_field} > ?`, _.take(value))
-                        break
-                    case 'le':
-                        ctx = where_func(`${sql_field} <= ?`, _.take(value))
-                        break
-                    case 'lt':
-                        ctx = where_func(`${sql_field} < ?`, _.take(value))
-                        break
-                    case 'in':
-                        ctx = where_func(`${sql_field} in (${make_holder(value)})`, value)
-                        break
-                    case 'not_in':
-                        ctx = where_func(`${sql_field} not in (${make_holder(value)})`, value)
-                        break
-                    // Todo 多重区间？
-                    case 'between':
-                        ctx = where_func(`${sql_field} between (${make_holder(value)})`, value)
-                        break
-                    case 'not_between':
-                        ctx = where_func(`${sql_field} not between (${make_holder(value)})`, value)
-                        break
-                    case 'like':
-                        ctx = where_func(`${sql_field} like ?`, _.take(value))
-                        break
-                    case 'not_like':
-                        ctx = where_func(`${sql_field} not like ?`, _.take(value))
-                        break
-                    case 'is_null':
-                        ctx = where_func(`${sql_field} is null`)
-                        break
-                    case 'is_not_null':
-                        ctx = where_func(`${sql_field} is not null`)
-                        break
+                ctx = op_handler[op](ctx, sql_field, array_val(val))
 
-                }
 
             })
             return ctx
@@ -533,6 +542,7 @@ export class Filaments<T> {
 
 
     // region 聚合
+    // TOdo target是否需要类型限定
     public aggregation(db: Knex, target: AggregationTarget, query: Query = {}, group: string | string[] = [], sub: Sub = null ): Knex.QueryBuilder{
         let base = this.build_select(db, query, sub).clearSelect()
 
@@ -543,7 +553,7 @@ export class Filaments<T> {
         _.forEach(target, (val: any, func) => {
             if (!_.isArray(val)) {val = [val]}
             for (const field of val) {
-                const func_name = this.func_name_save(func)
+                const func_name = this.func_name_safe(func)
                 const field_name = this.field_name_safe(field)
 
                 base = base.select(db.raw(`${func_name}(\`${field_name}\`) as ${func_name}_${field_name}`))
