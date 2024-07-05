@@ -31,29 +31,40 @@ describe("filaments", () => {
         })
     })
 
+    describe(".build_return", () => {
+        it("ok", () => {
+            const res1 = model.build_return(table.clone(), {rt: 'name`'}).toSQL()
+            expect(res1.sql).eq('select `name` from `T`')
+
+            const res2 = model.build_return(table.clone(), {rt: 'name,height'}).toSQL()
+            expect(res2.sql).eq('select `name`, `height` from `T`')
+        })
+    })
+
+    describe(".build_order", () => {
+        it("ok", () => {
+            const res1 = model.build_order(table.clone(), {od: 'id`,-name`'}).toSQL()
+            expect(res1.sql).eq('select * from `T` order by `id` ASC, `name` DESC')
+
+            const res2 = model.build_order(table.clone(), {od: 'name'}).toSQL()
+            expect(res2.sql).eq('select * from `T` order by `name` ASC')
+        })
+    })
+
     describe(".build_condition", () => {
         it('lg', () => {
             const res1 = model.build_condition(table.clone(), {name: "A", 'id|in': '1', lg: `(!(id|in),id|in)`}).toSQL()
             expect(res1.sql).eq('select * from `T` where (`name` = ? or `id` = ?)')
-        })
 
-        // it("lb", () => {
-        //     const res = model.build_condition(table.clone(), {name: "A", id: '1', lb: 'or'}).toSQL()
-        //     expect(res.sql).eq('select * from `T` where (`name` = ? or `id` = ?)')
-        //
-        //     const res2 = model.build_condition(table.clone(), {name: "A", id: '1', lb: 'and'}).toSQL()
-        //     expect(res2.sql).eq('select * from `T` where (`name` = ? and `id` = ?)')
-        // })
-        // it("lr", () => {
-        //     const res = model.build_condition(table.clone(), {name: "A", id: '1', weight: '20', lb: 'or', lr: [['name', 'weight']]}).toSQL()
-        //     expect(res.sql).eq('select * from `T` where (`name` = ? and `weight` = ?) or (`id` = ?)')
-        //
-        //     const res2 = model.build_condition(table.clone(), {name: "A", id: '1', weight: '20', lb: 'and', lr: [['name', 'weight']]}).toSQL()
-        //     expect(res2.sql).eq('select * from `T` where (`name` = ? or `weight` = ?) and (`id` = ?)')
-        //
-        //     const res3 = model.build_condition(table.clone(), {name: "A", id: '1', weight: '20', lb: 'and', lr: '((name,weight))'}).toSQL()
-        //     expect(res3.sql).eq('select * from `T` where (`name` = ? or `weight` = ?) and (`id` = ?)')
-        // })
+            const res2 = model.build_condition(table.clone(), {"time|date": "2024-01-01", 'id|in': '1', lg: `(!(id|in),id|in)`}).toSQL()
+            expect(res2.sql).eq('select * from `T` where (`name` = ? or `id` = ?)')
+
+            const res3 = model.build_condition(table.clone(), {name: "A", 'id|in': '1', lg: `(!(id|in),id|in)`}).toSQL()
+            expect(res3.sql).eq('select * from `T` where (`name` = ? or `id` = ?)')
+
+            const res4 = model.build_condition(table.clone(), {name: "A", 'id|in': '1', lg: `(!(id|in),id|in)`}).toSQL()
+            expect(res4.sql).eq('select * from `T` where (`name` = ? or `id` = ?)')
+        })
 
 
         it("func call", () => {
@@ -83,6 +94,9 @@ describe("filaments", () => {
             const res4 = model.build_condition(table.clone(), {"id|between": "1,2"}).toSQL()
             expect(res4.sql).eq('select * from `T` where (`id` between ? and ?)')
 
+            const res5 = model.build_condition(table.clone(), {"id|bt": "1,2"}).toSQL()
+            expect(res5.sql).eq('select * from `T` where (`id` between ? and ?)')
+
             const res = model.build_condition(table.clone(), {"data.id|date": "1"}).toSQL()
             expect(res.sql).eq('select * from `T` where (date(`data`->\'$.id\') = ?)')
 
@@ -107,5 +121,9 @@ describe("filaments", () => {
             expect(res.sql).eq("select count(`id`) as count_id, `category` from `T` where (`type` = ?) group by `category`")
         })
 
+        it("count_distinct", ()=> {
+            const res = model.aggregation(db, {count_distinct: 'id'}, {type: 'A'}, 'category').toSQL()
+            expect(res.sql).eq("select count(distinct `id`) as count_id, `category` from `T` where (`type` = ?) group by `category`")
+        })
     })
 })

@@ -17,7 +17,6 @@ export type MakeType<S> = {
 type Ids = number | number[] | string | string[]
 type Sub = Knex.QueryBuilder | null
 
-// Todo 能否兼容外部框架调用
 type Query = {
     pc?: number;
     p?: number;
@@ -159,7 +158,6 @@ export class Filaments<T> {
 
     /**
      * 过滤函数名
-     * Todo 完整的函数列表
      */
     private func_name_safe(func_name: string): string {
         for (const func of Filaments.SQL_FUNC_LIST) {
