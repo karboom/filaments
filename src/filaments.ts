@@ -23,19 +23,34 @@ type Query = {
     p?: number;
     od?:  string | string[];
     rt?:  string | string[];
-    or?: string | string[][];
     pg?: number;
     lg?: string;
-    // Todo 其他的保留字符串
     [key: string]: number| number[] | undefined | string | string[] | string[][]
 }
 
 
 
-// Todo 聚合函数白名单
+// 聚合函数类型
 type AggregationTarget = {
     sum?: string | string[],
     count?: string | string[],
+    avg?: string | string[],
+    max?: string | string[],
+    min?: string | string[],
+    group_concat?: string | string[],
+    bit_and?: string | string[],
+    bit_or?: string | string[],
+    bit_xor?: string | string[],
+    count_distinct?: string | string[],
+    json_arrayagg?: string | string[],
+    json_objectagg?: string | string[],
+    std?: string | string[],
+    stddev?: string | string[],
+    stddev_pop?: string | string[],
+    stddev_samp?: string | string[],
+    var_pop?: string | string[],
+    var_samp?: string | string[],
+    variance?:string | string[]
 }
 
 export class Filaments<T> {
@@ -51,10 +66,11 @@ export class Filaments<T> {
     public table: string = ''
     public pk: string = 'id'
 
-    constructor(table: string, schema: object, maps: object) {
+    constructor(table: string, schema: object, maps: object, pk: string = 'id') {
         this.table = table
         this.schema = schema
         this.maps = maps
+        this.pk = pk
 
         _.forEach(schema, (value, key) => {
             if (_.isObject(value)) {
@@ -109,10 +125,17 @@ export class Filaments<T> {
         return Joi.object(obj)
     }
 
-    // Todo
-    private field_name_safe(field_name: string): string {
-        return field_name.replace(/`/g, '')
+    /**
+     * 过滤字段包裹字符串
+     */
+    private field_name_safe(field_name: string, wrap: string = '`'): string {
+        return field_name.replace(new RegExp(wrap, "g"), '')
     }
+
+    /**
+     * 过滤函数名
+     * Todo
+     */
     private func_name_safe(func_name: string): string {
         const list = ['count']
         for (const func of list) {
@@ -163,7 +186,6 @@ export class Filaments<T> {
     // region 删除
 
     public delete_by_ids(db: Knex, ids: Ids) {
-        // Todo 好像IDs没必要clone
         let copy: any = _.clone(ids)
 
         if (!_.isArray(copy)) {
@@ -184,6 +206,7 @@ export class Filaments<T> {
 
         let schema = _.cloneDeep(this.schema)
         schema = schema_handler ? schema_handler(schema) : this.default_schema_handler(schema, copy);
+        schema = this.normalize_schema(schema)
 
         const res = Joi.object(schema).validate(copy, {
             presence: 'required',
@@ -334,6 +357,7 @@ export class Filaments<T> {
             const array_val = (val: any) => (!_.isArray(val) ? val.split(',') : val)
             const make_holder = (val: any, char = ',')=> _.join(_.map(val, () => '?'), ` ${char} `)
 
+            // Todo 别名支持
             const op_handler: any = {
                 'eq': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
                     return ctx[where_type](`${sql_field} = ?`, _.take(value))
@@ -400,11 +424,12 @@ export class Filaments<T> {
                 let sql_field = `\`${this.field_name_safe(field)}\``
                 if (field.indexOf('.') > -1 || field.indexOf('[') > -1) {
                     const segments = field.split('.')
-                    sql_field = `\`${this.field_name_safe(segments[0])}\`->'$.${segments.slice(1).join('.').replace(/'/g, '')}'`
+                    sql_field = `\`${this.field_name_safe(segments[0])}\`->'$.${this.field_name_safe(segments.slice(1).join('.'), "'")}'`
                 }
                 // endregion
 
                 // region 处理函数调用
+                // todo 基本运算符支持  * + - %
                 for (let func of func_list) {
                     let param_list: string[] = []
                     if (func.indexOf('(') > -1) {
@@ -550,6 +575,7 @@ export class Filaments<T> {
             base = base.groupBy(_.isArray(group) ? group : [group])
         }
 
+        // Todo count distinct支持
         _.forEach(target, (val: any, func) => {
             if (!_.isArray(val)) {val = [val]}
             for (const field of val) {
