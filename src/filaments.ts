@@ -57,6 +57,21 @@ export class Filaments<T> {
     static DEFAULT_QUERY_PC: number = 20
     static DEFAULT_QUERY_P: number = 1
     static NAME_SPLITTER: string = '|'
+    static OP_ALIAS: {[key in string]: string[]} = {
+        'eq': [],
+        'gt': [],
+        'ge': [],
+        'lt': [],
+        'le': [],
+        'in': [],
+        'not_in': ['nin'],
+        'between': ['bt'],
+        'not_between': ['nbt'],
+        'like': ['lk'],
+        'not_like': ['nlk'],
+        'is_null': ['nl'],
+        'is_not_null': ['nnl']
+    }
 
     public json_fields: string[] = []
     public maps: {} = {}
@@ -356,7 +371,6 @@ export class Filaments<T> {
             const array_val = (val: any) => (!_.isArray(val) ? val.toString().split(',') : val.toString())
             const make_holder = (val: any, char = ',')=> _.join(_.map(val, () => '?'), ` ${char} `)
 
-            // Todo 别名支持
             const op_handler: any = {
                 'eq': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
                     return ctx[where_type](`${sql_field} = ?`, _.take(value))
@@ -400,6 +414,14 @@ export class Filaments<T> {
                     return ctx[where_type](`${sql_field} is not null`)
                 }
             };
+
+            _.forEach(op_handler, (val, key:string)=> {
+                if (Filaments.OP_ALIAS[key]) {
+                    for (const name of Filaments.OP_ALIAS[key]) {
+                        op_handler[name] = val
+                    }
+                }
+            })
 
             _.forEach(picked_query, (val, key: string) => {
                 const left_parts = key.split(Filaments.NAME_SPLITTER)
