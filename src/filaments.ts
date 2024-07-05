@@ -134,7 +134,7 @@ export class Filaments<T> {
 
     /**
      * 过滤函数名
-     * Todo
+     * Todo 完整的函数列表
      */
     private func_name_safe(func_name: string): string {
         const list = ['count', 'sum']
@@ -229,16 +229,16 @@ export class Filaments<T> {
     public build_return(db: Knex.QueryBuilder, query: Query): Knex.QueryBuilder {
         let fields: any = '*'
         if (query.rt) {
-            // Todo 安全问题
             fields = _.isArray(query.rt) ? query.rt : query.rt.split(',');
+            fields = _.map(fields, (field) => this.field_name_safe(field))
         }
 
         return db.select(fields)
     }
 
     public build_sub(db: Knex, sub: Sub) : Knex.QueryBuilder{
-        // Todo 安全问题
         if (sub) {
+            // Todo 安全问题
             return db.table(db.raw(sub.table(this.table)).wrap('(', ') as sub'))
         } else {
             return db.table(this.table)
@@ -246,7 +246,6 @@ export class Filaments<T> {
     }
 
     public build_order(db: Knex.QueryBuilder, query: Query) {
-        // Todo 安全问题
         if (query.od) {
             const sorts: string[] = []
             const origin: string[] = _.isArray(query.od) ? query.od : query.od.split(',')
@@ -260,10 +259,10 @@ export class Filaments<T> {
                     field = val
                 }
 
-                sorts.push(`\`${field}\` ${order}`)
+                sorts.push(`\`${this.field_name_safe(field)}\` ${order}`)
             })
 
-            return db.orderByRaw(sorts.join(','))
+            return db.orderByRaw(sorts.join(', '))
         } else {
             return db
         }
@@ -353,8 +352,8 @@ export class Filaments<T> {
          * 字段和条件构建
          */
         const field_build = (ctx: Knex.QueryBuilder, picked_query: Query,  where_type: "orWhereRaw" | "andWhereRaw"): Knex.QueryBuilder => {
-            // Todo 这里的类型要限制的严格一些,数字类型怎么办
-            const array_val = (val: any) => (!_.isArray(val) ? val.split(',') : val)
+            // 统一转换为字符串类型，数据库自带类型转换
+            const array_val = (val: any) => (!_.isArray(val) ? val.toString().split(',') : val.toString())
             const make_holder = (val: any, char = ',')=> _.join(_.map(val, () => '?'), ` ${char} `)
 
             // Todo 别名支持
