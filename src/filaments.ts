@@ -72,6 +72,16 @@ export class Filaments<T> {
         'is_null': ['nl'],
         'is_not_null': ['nnl']
     }
+    static SQL_FUNC_LIST: string[] = [
+        // 聚合函数
+        "sum", "count", "avg", "max", "min", "group_concat", "bit_and", "bit_or", "bit_xor", "json_arrayagg", "json_objectagg", "std", "stddev", "stddev_pop", "stddev_samp", "var_pop", "var_samp", "variance",
+        // 日期函数
+        "adddate", "addtime", "convert_tz", "curdate", "current_date", "current_time", "current_timestamp", "curtime", "date", "date_add", "date_format", "date_sub", "datediff", "day", "dayname", "dayofmonth", "dayofweek", "dayofyear", "extract", "from_days", "from_unixtime", "get_format", "hour", "last_day", "localtime", "localtimestamp", "makedate", "maketime", "microsecond", "minute", "month", "monthname", "now", "period_add", "period_diff", "quarter", "sec_to_time", "second", "str_to_date", "subdate", "subtime", "sysdate", "time", "time_format", "time_to_sec", "timediff", "timestamp", "timestampadd", "timestampdiff", "to_days", "to_seconds", "unix_timestamp", "utc_date", "utc_time", "utc_timestamp", "week", "weekday", "weekofyear", "year", "yearweek",
+        // 字符串函数
+        "ascii", "bin", "bit_length", "char", "char_length", "character_length", "concat", "concat_ws", "elt", "export_set", "field", "find_in_set", "format", "hex", "insert", "instr", "lcase", "left", "length", "load_file", "locate", "lower", "lpad", "ltrim", "make_set", "match", "mid", "oct", "octet_length", "ord", "position", "quote", "regexp_instr", "regexp_like", "regexp_replace", "regexp_substr", "repeat", "replace", "reverse", "right", "rlike", "rpad", "rtrim", "soundex", "space", "strcmp", "substr", "substring", "substring_index", "trim", "ucase", "unhex", "upper", "weight_string",
+        // 数字函数
+        "abs", "acos", "asin", "atan", "atan2", "ceil", "ceiling", "conv", "cos", "cot", "crc32", "degrees", "div", "exp", "floor", "ln", "log", "log10", "log2", "mod", "pi", "pow", "power", "radians", "rand", "round", "sign", "sin", "sqrt", "tan", "truncate"
+    ]
 
     public json_fields: string[] = []
     public maps: {} = {}
@@ -152,8 +162,7 @@ export class Filaments<T> {
      * Todo 完整的函数列表
      */
     private func_name_safe(func_name: string): string {
-        const list = ['count', 'sum']
-        for (const func of list) {
+        for (const func of Filaments.SQL_FUNC_LIST) {
             if (func_name.toLowerCase().indexOf(func) > -1) {
                 return func
             }
@@ -412,7 +421,8 @@ export class Filaments<T> {
                 },
                 'is_not_null': (ctx: Knex.QueryBuilder, sql_field: string, value: any) => {
                     return ctx[where_type](`${sql_field} is not null`)
-                }
+                },
+                // Todo `sounds like`   `regexp`两种操作
             };
 
             _.forEach(op_handler, (val, key:string)=> {
