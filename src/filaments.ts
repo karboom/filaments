@@ -137,7 +137,7 @@ export class Filaments<T> {
      * Todo
      */
     private func_name_safe(func_name: string): string {
-        const list = ['count']
+        const list = ['count', 'sum']
         for (const func of list) {
             if (func_name.toLowerCase().indexOf(func) > -1) {
                 return func
@@ -567,7 +567,6 @@ export class Filaments<T> {
 
 
     // region 聚合
-    // TOdo target是否需要类型限定
     public aggregation(db: Knex, target: AggregationTarget, query: Query = {}, group: string | string[] = [], sub: Sub = null ): Knex.QueryBuilder{
         let base = this.build_select(db, query, sub).clearSelect()
 
@@ -575,14 +574,19 @@ export class Filaments<T> {
             base = base.groupBy(_.isArray(group) ? group : [group])
         }
 
-        // Todo count distinct支持
         _.forEach(target, (val: any, func) => {
             if (!_.isArray(val)) {val = [val]}
             for (const field of val) {
-                const func_name = this.func_name_safe(func)
                 const field_name = this.field_name_safe(field)
 
-                base = base.select(db.raw(`${func_name}(\`${field_name}\`) as ${func_name}_${field_name}`))
+                if (func == 'count_distinct') {
+                    const func_name = this.func_name_safe(func.split('_')[0])
+                    base = base.select(db.raw(`${func_name}(distinct \`${field_name}\`) as ${func_name}_${field_name}`))
+                } else {
+                    const func_name = this.func_name_safe(func)
+                    base = base.select(db.raw(`${func_name}(\`${field_name}\`) as ${func_name}_${field_name}`))
+                }
+
             }
         })
 
